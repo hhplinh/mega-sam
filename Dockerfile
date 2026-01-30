@@ -36,10 +36,10 @@ ENV CONDA_DEFAULT_ENV=${ENV_NAME}
 ENV PATH=${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/bin:$PATH
 
 # torch-scatter: install matching prebuilt wheel for torch 2.0.1 + cu118
-RUN micromamba run -n ${ENV_NAME} pip uninstall -y torch-scatter || true
-RUN micromamba run -n ${ENV_NAME} pip install \
-    torch-scatter==2.1.2 \
-    -f https://data.pyg.org/whl/torch-2.0.1+cu118.html
+RUN micromamba run -n ${ENV_NAME} python -m pip install --no-cache-dir \
+    torch==2.2.0 --index-url https://download.pytorch.org/whl/cu121 && \
+    micromamba run -n ${ENV_NAME} python -m pip install --no-cache-dir \
+    torch-scatter==2.1.2 -f https://data.pyg.org/whl/torch-2.2.0+cu121.html
 
 # xformers (optional)
 RUN micromamba run -n ${ENV_NAME} python -c "import xformers" 2>/dev/null || \
