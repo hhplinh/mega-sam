@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Etc/UTC \
@@ -29,17 +29,30 @@ WORKDIR /workspace/megasam
 COPY . /workspace/megasam
 
 ARG ENV_NAME=mega_sam
-RUN micromamba env create -n ${ENV_NAME} -f environment.yml \
+RUN micromamba env create -n ${ENV_NAME} -f environment.docker.yml \
     && micromamba clean -a -y
 
 ENV CONDA_DEFAULT_ENV=${ENV_NAME}
 ENV PATH=${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/bin:$PATH
 
-# torch-scatter: install matching prebuilt wheel for torch 2.0.1 + cu118
+RUN micromamba run -n ${ENV_NAME} pip uninstall -y torch torchvision torchaudio || true
+
+# Install matching nightly trio (cu128)
+RUN micromamba run -n ${ENV_NAME} pip install --pre \
+  torch torchvision torchaudio \
+  --index-url https://download.pytorch.org/whl/nightly/cu128
+
+# Sanity check distributed import (catches your current failure early)
+RUN micromamba run -n ${ENV_NAME} python3 -c "import torch; import torch.distributed as dist; print(torch.__version__, torch.version.cuda, dist.is_available())"
+
+# Build your extension
+# (For RTX 50xx, compiling PTX is safer than hard-coding an arch you might not have nvcc support for)
+ENV TORCH_CUDA_ARCH_LIST="12.0+PTX"
+
+
 RUN micromamba run -n ${ENV_NAME} python -m pip install --no-cache-dir \
-    torch==2.2.0 --index-url https://download.pytorch.org/whl/cu121 && \
-    micromamba run -n ${ENV_NAME} python -m pip install --no-cache-dir \
     torch-scatter==2.1.2 -f https://data.pyg.org/whl/torch-2.2.0+cu121.html
+
 
 # xformers (optional)
 RUN micromamba run -n ${ENV_NAME} python -c "import xformers" 2>/dev/null || \
