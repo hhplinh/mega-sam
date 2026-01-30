@@ -2,8 +2,8 @@ docker build -t mega-sam:cu118 .
 
 docker run --rm -it --gpus all \
   -v "$PWD:/workspace/megasam" \
-  -v "$PWD/host_data/checkpoints/Depth-Anything:/workspace/megasam/Depth-Anything" \
-  -v "$PWD/host_data/checkpoints/cvd_opt/raft-things.pth:/workspace/megasam/cvd_opt/raft-things.pth" \
+  -v "$PWD/Depth-Anything/checkpoints:/workspace/megasam/Depth-Anything/checkpoints" \
+  -v "$PWD/cvd_opt/raft-things.pth:/workspace/megasam/cvd_opt/raft-things.pth" \
   -w /workspace/megasam \
   mega-sam:cu118
 
@@ -13,9 +13,9 @@ ls -lh cvd_opt/raft-things.pth
 # add dataset folder then mount again
 docker run --rm -it --gpus all \
   -v "$PWD:/workspace/megasam" \
-  -v "$PWD/host_data/checkpoints/Depth-Anything:/workspace/megasam/Depth-Anything" \
-  -v "$PWD/host_data/checkpoints/cvd_opt/raft-things.pth:/workspace/megasam/cvd_opt/raft-things.pth" \
-  -v "$PWD/host_data/datasets:/data" \
+  -v "$PWD/Depth-Anything/checkpoints:/workspace/megasam/Depth-Anything/checkpoints" \
+  -v "$PWD/cvd_opt/raft-things.pth:/workspace/megasam/cvd_opt/raft-things.pth" \
+  -v "$PWD/data:/data" \
   -w /workspace/megasam \
   mega-sam:cu118
 
@@ -26,3 +26,7 @@ bash ./tools/evaluate_sintel.sh
 bash ./cvd_opt/cvd_opt_sintel.sh
 python ./evaluations_poses/evaluate_sintel.py
 python ./evaluations_depth/evaluate_depth_ours_sintel.py
+
+----
+
+ffmpeg -i data/src.mp4 data/frames/frame_%06d.jpg
