@@ -1,64 +1,67 @@
-# syntax=docker/dockerfile:1
-FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    TZ=Etc/UTC \
-    PIP_NO_CACHE_DIR=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
 
+# ---- System deps (build + common runtime deps) ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git wget curl ca-certificates bzip2 \
-    build-essential cmake pkg-config \
-    ffmpeg \
-    libgl1 libglib2.0-0 \
+    ca-certificates \
+    curl \
+    wget \
+    git \
+    bzip2 \
+    build-essential \
+    cmake \
+    pkg-config \
+    ninja-build \
+    python3-dev \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-# micromamba
-ARG MAMBA_VERSION=1.5.10
-RUN curl -Ls "https://micro.mamba.pm/api/micromamba/linux-64/${MAMBA_VERSION}" -o /tmp/micromamba.tar.bz2 \
-    && mkdir -p /opt/micromamba \
-    && tar -xvjf /tmp/micromamba.tar.bz2 -C /opt/micromamba --strip-components=1 bin/micromamba \
-    && ln -s /opt/micromamba/micromamba /usr/local/bin/micromamba \
-    && rm -f /tmp/micromamba.tar.bz2
+# ---- Miniconda (Python 3.10 capable) ----
+ENV CONDA_DIR=/opt/conda
+RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-py310_24.3.0-0-Linux-x86_64.sh -O /tmp/miniconda.sh && \
+    bash /tmp/miniconda.sh -b -p ${CONDA_DIR} && \
+    rm /tmp/miniconda.sh
+ENV PATH=${CONDA_DIR}/bin:$PATH
 
-ENV MAMBA_ROOT_PREFIX=/opt/conda
-RUN micromamba shell init -s bash -p ${MAMBA_ROOT_PREFIX}
+# Use bash so we can conda activate
+SHELL ["/bin/bash", "-lc"]
 
-WORKDIR /workspace/megasam
-COPY . /workspace/megasam
+# Faster solver + cleanup
+RUN conda install -y -n base conda-libmamba-solver && \
+    conda config --set solver libmamba && \
+    conda clean -afy
 
-ARG ENV_NAME=mega_sam
-RUN micromamba env create -n ${ENV_NAME} -f environment.docker.yml \
-    && micromamba clean -a -y
+WORKDIR /workspace
 
-ENV CONDA_DEFAULT_ENV=${ENV_NAME}
-ENV PATH=${MAMBA_ROOT_PREFIX}/envs/${ENV_NAME}/bin:$PATH
+# Copy env spec first for better caching
+COPY environment.yml /workspace/environment.yml
 
-RUN micromamba run -n ${ENV_NAME} pip uninstall -y torch torchvision torchaudio || true
+# Create the environment exactly as specified
+RUN conda env create -f /workspace/environment.yml && conda clean -afy
 
-# Install matching nightly trio (cu128)
-RUN micromamba run -n ${ENV_NAME} pip install --pre \
-  torch torchvision torchaudio \
-  --index-url https://download.pytorch.org/whl/nightly/cu128
+# Make the env auto-activate for interactive shells
+RUN echo "source activate mega_sam" >> /etc/bash.bashrc
 
-# Sanity check distributed import (catches your current failure early)
-RUN micromamba run -n ${ENV_NAME} python3 -c "import torch; import torch.distributed as dist; print(torch.__version__, torch.version.cuda, dist.is_available())"
+# ---- Install xformers prebuilt for py310 + cu11.8 + pyt2.0.1 ----
+RUN source activate mega_sam && \
+    wget -q \
+      https://anaconda.org/xformers/xformers/0.0.22.post7/download/linux-64/xformers-0.0.22.post7-py310_cu11.8.0_pyt2.0.1.tar.bz2 \
+      -O /tmp/xformers.tar.bz2 && \
+    conda install -y /tmp/xformers.tar.bz2 && \
+    rm -f /tmp/xformers.tar.bz2 && \
+    conda clean -afy
 
-# Build your extension
-# (For RTX 50xx, compiling PTX is safer than hard-coding an arch you might not have nvcc support for)
-ENV TORCH_CUDA_ARCH_LIST="12.0+PTX"
+# Copy the rest of the repo
+COPY . /workspace
 
+# ---- Compile/install camera tracking extensions ----
+RUN source activate mega_sam && \
+    cd /workspace/base && \
+    python setup.py install
 
-RUN micromamba run -n ${ENV_NAME} python -m pip install --no-cache-dir \
-    torch-scatter==2.1.2 -f https://data.pyg.org/whl/torch-2.2.0+cu121.html
-
-
-# xformers (optional)
-RUN micromamba run -n ${ENV_NAME} python -c "import xformers" 2>/dev/null || \
-    (micromamba run -n ${ENV_NAME} micromamba install -y -c xformers -c pytorch -c conda-forge "xformers=0.0.22.post7" || true)
-
-# compile camera tracking module extensions
-RUN micromamba run -n ${ENV_NAME} bash -lc "cd base && python setup.py install"
-
-CMD ["bash", "-lc", "python -c \"import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'available', torch.cuda.is_available())\" && bash"]
+CMD ["/bin/bash"]
